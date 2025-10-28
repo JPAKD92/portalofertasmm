@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Portal de Ofertas</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <style>
+      :root { --brand-red:#dc2626; --brand-black:#0a0a0a; }
+      .brand-gradient{ background:linear-gradient(135deg,var(--brand-black),var(--brand-red)); }
+      .card{ box-shadow:0 8px 30px rgba(0,0,0,.15); }
+      .focus-ring:focus{ outline:2px solid var(--brand-red); outline-offset:2px; }
+      .whatsapp{ background:#25D366; }
+      .whatsapp:hover{ filter:brightness(.95); }
+      .mono{ font-variant-numeric: tabular-nums; }
+      input[type=number]::-webkit-outer-spin-button,
+      input[type=number]::-webkit-inner-spin-button{ -webkit-appearance:none; margin:0; }
+      input[type=number]{ -moz-appearance:textfield; }
+      th, td { vertical-align: top; }
+      details summary::-webkit-details-marker { display: none; }
+      details summary { cursor: pointer; }
+    </style>
+  </head>
+  <body class="bg-neutral-950 text-white min-h-screen">
+    <header class="brand-gradient p-6">
+      <div class="max-w-6xl mx-auto flex flex-col gap-2">
+        <h1 class="text-2xl md:text-3xl font-bold tracking-tight">Portal de Ofertas</h1>
+        <p class="text-white/80">Ingresá tu número de cliente para ver tus ofertas activas.</p>
+        <div class="mt-3 flex gap-3 items-center">
+          <input id="clienteInput" type="number" placeholder="N° de cliente" class="focus-ring w-48 md:w-60 px-4 py-2 rounded-lg text-black" />
+          <button id="buscarBtn" class="bg-white text-black font-semibold px-5 py-2 rounded-lg hover:bg-white/90">Buscar</button>
+        </div>
+        <p class="text-sm text-white/70 mt-1">Revisá que el código de cliente que estés indicando sea correcto.</p>
+      </div>
+    </header>
+
+    <main class="max-w-6xl mx-auto p-4 md:p-6">
+      <section id="estado" class="mb-4 text-white/80"></section>
+      <section id="ofertasContainer" class="space-y-4"></section>
+    </main>
+
+    <template id="tplOferta">
+      <details class="card bg-neutral-900 rounded-2xl overflow-hidden border border-neutral-800">
+        <summary class="px-5 pt-5 pb-4 border-b border-neutral-800 flex justify-between items-center">
+          <div>
+            <h2 class="text-xl font-bold" data-role="titulo"></h2>
+            <div class="mt-1 text-sm text-white/70">
+              <span class="mr-4" data-role="vigencia"></span>
+              <span class="block md:inline" data-role="descripcion"></span>
+            </div>
+          </div>
+          <span class="text-red-500 font-semibold">▼</span>
+        </summary>
+
+        <div class="p-5">
+          <div class="mt-4 flex flex-wrap items-center gap-3">
+            <input type="text" placeholder="Filtrar por código o descripción" data-role="filtro" class="focus-ring px-3 py-2 rounded-lg text-black w-72" />
+            <label class="flex items-center gap-2 text-sm text-white/80">
+              <input type="checkbox" data-role="onlyQty" class="rounded" /> Mostrar solo líneas con cantidad
+            </label>
+            <button class="bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 px-3 py-2 rounded-lg text-sm" data-role="clearFiltro">Limpiar filtro</button>
+          </div>
+
+          <div class="overflow-x-auto mt-4">
+            <table class="w-full text-sm table-auto">
+              <thead class="sticky top-0 bg-neutral-900">
+                <tr class="text-left text-white/70 border-b border-neutral-800">
+                  <th class="py-2 w-40 whitespace-nowrap">Código</th>
+                  <th class="py-2">Descripción</th>
+                  <th class="py-2 w-28 whitespace-nowrap">Precio</th>
+                  <th class="py-2 w-28 whitespace-nowrap">Cantidad</th>
+                  <th class="py-2 w-28 whitespace-nowrap">PxQ</th>
+                </tr>
+              </thead>
+              <tbody data-role="tbody"></tbody>
+              <tfoot>
+                <tr class="border-t border-neutral-800">
+                  <td class="py-3 font-semibold" colspan="4">Total</td>
+                  <td class="py-3 font-bold mono whitespace-nowrap" data-role="total">$0</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          <div class="mt-4 flex flex-wrap gap-3">
+            <button class="whatsapp text-black font-semibold px-5 py-2 rounded-lg" data-role="btnWA">Enviar pedido por WhatsApp</button>
+            <button class="bg-red-600 hover:bg-red-500 text-white font-semibold px-5 py-2 rounded-lg" data-role="btnClear">Vaciar cantidades</button>
+          </div>
+        </div>
+      </details>
+    </template>
+
+    <script>
+      const DATA_MANIFEST = 'data/offers.json';
+      const DEFAULT_WA_NUMBER = '5491155173757';
+
+      function lsKey(cliente, offerName){ return `ofertas:${cliente}:${offerName}`; }
+      function loadDraft(cliente, offerName){ try{return JSON.parse(localStorage.getItem(lsKey(cliente,offerName))||'{}');}catch(e){return {};}}
+      function saveDraft(cliente, offerName, data){ try{localStorage.setItem(lsKey(cliente,offerName),JSON.stringify(data));}catch(e){} }
+      function clearDraft(cliente, offerName){ try{localStorage.removeItem(lsKey(cliente,offerName));}catch(e){} }
+
+      const estado=document.getElementById('estado');
+      const cont=document.getElementById('ofertasContainer');
+      const btnBuscar=document.getElementById('buscarBtn');
+      const inpCliente=document.getElementById('clienteInput');
+
+      function formatMoney(n){ if(n==null||isNaN(n))return '$0'; return Number(n).toLocaleString('es-AR',{style:'currency',currency:'ARS',maximumFractionDigits:0}); }
+      async function fetchArrayBuffer(url){ const res=await fetch(url); if(!res.ok)throw new Error('No se pudo cargar '+url); return await res.arrayBuffer(); }
+      async function loadManifest(){ const res=await fetch(DATA_MANIFEST); if(!res.ok)throw new Error('No se pudo cargar el manifiesto'); return await res.json(); }
+
+      function getMeta(sh){ const t=sh['A1']?String(sh['A1'].v):'Oferta'; const v=sh['A2']?String(sh['A2'].v):''; const d=sh['A3']?String(sh['A3'].v):''; let w=sh['A4']?String(sh['A4'].v):''; if(w)w=w.replace(/[^0-9]/g,''); const wa=(w&&w.length>=8)?w:DEFAULT_WA_NUMBER; return {titulo:t,vigencia:v,descripcion:d,whatsapp:wa}; }
+      function readRowsFromOferta(sh){ const range=XLSX.utils.decode_range(sh['!ref']||'A1:C1'); const rows=[]; for(let r=5;r<=range.e.r;r++){ const A=sh['A'+(r+1)],B=sh['B'+(r+1)],C=sh['C'+(r+1)]; const codigo=A?A.v:undefined,descripcion=B?B.v:undefined,precio=C?C.v:undefined; if(!codigo)continue; rows.push({codigo,descripcion,precio}); } return rows; }
+      function readClientes(sh){ if(!sh)return[]; const out=[]; const range=XLSX.utils.decode_range(sh['!ref']||'A1:A1'); for(let r=0;r<=range.e.r;r++){ const c=sh['A'+(r+1)]; if(!c)continue; if(c.v!==undefined&&c.v!=='')out.push(c.v);} return out; }
+
+      function buildOfferDOM(meta, rows, offerName, cliente){
+        const tpl=document.getElementById('tplOferta'); const node=tpl.content.cloneNode(true);
+        node.querySelector('[data-role="titulo"]').textContent=`${meta.titulo} — ${offerName}`;
+        node.querySelector('[data-role="vigencia"]').textContent=meta.vigencia?`Vigencia: ${meta.vigencia}`:'';
+        node.querySelector('[data-role="descripcion"]').textContent=meta.descripcion||'';
+
+        const tbody=node.querySelector('[data-role="tbody"]'); const totalEl=node.querySelector('[data-role="total"]'); const btnWA=node.querySelector('[data-role="btnWA"]'); const btnClear=node.querySelector('[data-role="btnClear"]'); const filtro=node.querySelector('[data-role="filtro"]'); const clearFiltro=node.querySelector('[data-role="clearFiltro"]'); const onlyQty=node.querySelector('[data-role="onlyQty"]');
+
+        const borrador=loadDraft(cliente,offerName); const cantidadInputs=[];
+
+        rows.forEach((r,idx)=>{
+          const tr=document.createElement('tr'); tr.className=idx%2?'bg-neutral-900':'bg-neutral-950';
+          const tdCod=document.createElement('td');tdCod.className='py-2 pr-3 mono whitespace-nowrap';tdCod.textContent=r.codigo??'';
+          const tdDes=document.createElement('td');tdDes.className='py-2 pr-3 break-words';tdDes.textContent=r.descripcion??'';
+          const tdPre=document.createElement('td');tdPre.className='py-2 pr-3 mono whitespace-nowrap';tdPre.textContent=(r.precio!=null&&r.precio!=='')?formatMoney(Number(r.precio)):'';
+          const tdCant=document.createElement('td');tdCant.className='py-2 pr-3'; const inp=document.createElement('input'); inp.type='number'; inp.min='0'; inp.step='1'; inp.value=''; inp.className='focus-ring w-24 px-2 py-1 rounded bg-white text-black'; if(borrador[r.codigo]!=null)inp.value=String(borrador[r.codigo]); tdCant.appendChild(inp);
+          const tdPxQ=document.createElement('td');tdPxQ.className='py-2 pr-3 mono whitespace-nowrap';tdPxQ.textContent='$0';
+          Object.defineProperty(tr,'__pxq',{get(){return(Number(r.precio||0)*Number(inp.value||0))||0;}});
+          inp.addEventListener('input',()=>{
+            tdPxQ.textContent=formatMoney(Number(r.precio||0)*Number(inp.value||0)); let sum=0; tbody.querySelectorAll('tr').forEach(row=>sum+=row.__pxq); totalEl.textContent=formatMoney(sum);
+            const data=Object.fromEntries(cantidadInputs.map(x=>[x.codigo,x.cantidad]).filter(([,q])=>q>0)); saveDraft(cliente,offerName,data); applyFilter();
+          });
+          tr.append(tdCod,tdDes,tdPre,tdCant,tdPxQ); tbody.appendChild(tr);
+          cantidadInputs.push({codigo:r.codigo,get cantidad(){return Number(inp.value||0);},row:tr,descripcion:(r.descripcion||'').toString()});
+        });
+
+        tbody.querySelectorAll('input[type=number]').forEach(i=>i.dispatchEvent(new Event('input')));
+
+        btnClear.addEventListener('click',()=>{tbody.querySelectorAll('input[type=number]').forEach(i=>i.value=''); totalEl.textContent=formatMoney(0); clearDraft(cliente,offerName); filtro.value=''; onlyQty.checked=false; applyFilter();});
+
+        function applyFilter(){ const q=(filtro.value||'').toLowerCase().trim(); const showOnlyQty=!!onlyQty.checked; cantidadInputs.forEach(item=>{const m=!q||item.codigo.toString().toLowerCase().includes(q)||item.descripcion.toLowerCase().includes(q); const ok=!showOnlyQty||item.cantidad>0; item.row.style.display=(m&&ok)?'':'';}); }
+        filtro.addEventListener('input',debounce(applyFilter,150)); onlyQty.addEventListener('change',applyFilter); clearFiltro.addEventListener('click',()=>{filtro.value='';onlyQty.checked=false;applyFilter();});
+
+        btnWA.addEventListener('click',()=>{ const lineas=cantidadInputs.filter(x=>x.cantidad>0).map(x=>`Código: ${x.codigo} | Cant: ${x.cantidad}`); if(!lineas.length){alert('No hay cantidades ingresadas.');return;} const encabezado=[`N° Cliente: ${cliente}`,`Oferta: ${meta.titulo}`]; const cuerpo=encabezado.concat(lineas).join('\n'); const url=`https://wa.me/${meta.whatsapp}?text=${encodeURIComponent(cuerpo)}`; window.open(url,'_blank'); });
+        return node;
+      }
+
+      function debounce(fn,wait){let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),wait);};}
+
+      async function buscarOfertasParaCliente(cliente){ cont.innerHTML=''; estado.textContent='Buscando ofertas...'; try{ const m=await loadManifest(); const archivos=m.files||[]; const ofertas=[]; for(const f of archivos){ const url=`data/${encodeURIComponent(f)}`; try{ const buf=await fetchArrayBuffer(url); const wb=XLSX.read(buf,{type:'array'}); const shO=wb.Sheets['Oferta']||wb.Sheets[wb.SheetNames[0]]; const shC=wb.Sheets['Clientes']||wb.Sheets[wb.SheetNames[1]]; if(!shO)throw new Error('Falta hoja Oferta'); const meta=getMeta(shO); const rows=readRowsFromOferta(shO); const clientes=readClientes(shC); const all=clientes.length===0; const match=all||clientes.map(String).includes(String(cliente)); if(!match)continue; ofertas.push({meta,rows,offerName:f.replace(/\.xlsx?$/i,'')}); }catch(e){console.warn('Error leyendo',f,e);} } if(!ofertas.length){estado.textContent='No hay ofertas disponibles para este cliente.';return;} estado.textContent=`${ofertas.length} oferta(s) disponible(s).`; ofertas.forEach(o=>cont.appendChild(buildOfferDOM(o.meta,o.rows,o.offerName,cliente))); }catch(e){console.error(e);estado.textContent='Error cargando datos.';} }
+
+      btnBuscar.addEventListener('click',()=>{const val=(inpCliente.value||'').trim(); if(!val){alert('Ingresá tu número de cliente');return;} buscarOfertasParaCliente(val);});
+      inpCliente.addEventListener('keydown',e=>{if(e.key==='Enter')btnBuscar.click();});
+    </script>
+  </body>
+</html>
